@@ -1,152 +1,215 @@
-import numpy as np
-import cv2
 import glob
 import os
-import matplotlib.pyplot as plt
-# % matplotlib inline
+import pickle
+from os import path
+import matplotlib.image as mpimg
+import cv2
+import numpy as np
+from matplotlib import pyplot as plt
 
-yellow_HSV_th_min = np.array([0, 70, 70])
-yellow_HSV_th_max = np.array([50, 255, 255])
+from consts import yellow_hsv_min, yellow_hsv_max
+
 
 def calibrate(images_dir='camera_cal'):
     """
     Calibrate the camera given a directory containing calibration chessboards.
     :param images_dir: directory containing calibrated images.
+    :param mode: video or image
     :return: calibration parameters
     """
-    image_files = glob.glob(os.path.join(images_dir, "*.jpg"))
-    obj_points = []
-    img_points = []
-    nx, ny = 9, 6
-    objp = np.zeros((nx * ny, 3), np.float32)
-    objp[:, :2] = np.mgrid[0:nx, 0:ny].T.reshape(-1, 2)
+    cache = '{}/data.pickle'.format(images_dir)
 
-    for image_file in image_files:
-        image = cv2.imread(image_file)
-        # Convert to grayscale
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        # Find the chessboard corners
-        ret, corners = cv2.findChessboardCorners(gray, (nx, ny), None)
-        if ret:
-            obj_points.append(objp)
-            img_points.append(corners)
-    ret, mtx, dist, rvecs, tvecs = cv2.calibrateCamera(obj_points, img_points, gray.shape[::-1], None, None)
-    return mtx, dist
+    if path.exists(cache):
+        print('Loading cached calibration...')
+        with open(cache, 'rb') as dump_file:
+            calibration = pickle.load(dump_file)
+    else:
+        print('Computing camera calibration...')
+        image_files = glob.glob(os.path.join(images_dir, "*.jpg"))
+        obj_points = []
+        img_points = []
+        nx, ny = 9, 6
+        objp = np.zeros((nx * ny, 3), np.float32)
+        objp[:, :2] = np.mgrid[0:nx, 0:ny].T.reshape(-1, 2)
+
+        for image_file in image_files:
+            image = mpimg.imread(image_file)
+            # Convert to grayscale
+            gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+            # Find the chessboard corners
+            ret, corners = cv2.findChessboardCorners(gray, (nx, ny), None)
+            if ret:
+                # only append the points if ret is not 0
+                obj_points.append(objp)
+                img_points.append(corners)
+        ret, mtx, dist, _, _ = cv2.calibrateCamera(obj_points, img_points, gray.shape[::-1], None, None)
+        calibration = (mtx, dist)
+        with open(cache, 'wb') as dump_file:
+            pickle.dump(calibration, dump_file)
+
+    return calibration[0], calibration[1]
 
 
-def undistort(image, mtx, dist):
+def undistort(image, mtx, dist, visualise=False):
     """
      Undistort an image given camera matrix and distortion coefficients.
+    :param visualise:
     :param image: input image
     :param mtx: camera matrix
     :param dist: distortion coefficients
     :return: undistorted image
     """
-    undist = cv2.undistort(image, mtx, dist, None, mtx)
+    undist = cv2.undistort(image, mtx, dist, newCameraMatrix=mtx)
+    if visualise:
+        f, axes = plt.subplots(1, 2)
+        axes[0].imshow(image, cmap='gray')
+        axes[0].set_title('Original Image')
+        axes[0].set_axis_off()
+
+        axes[1].imshow(undist, cmap='gray')
+        axes[1].set_title('Undistorted Image')
+        axes[1].set_axis_off()
+        plt.show()
+        f.savefig("output_images/undistort.png", format='png', bbox_inches='tight', transparent=True)
     return undist
 
 
-def HSV_threshold(frame, min_values, max_values):
+def hsv_threshold(frame, min_values, max_values):
     """
     Threshold a color frame in HSV space
     """
-    HSV = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    hsv = cv2.cvtColor(frame, cv2.COLOR_RGB2HSV)
+    mask = cv2.inRange(hsv, min_values, max_values)
+    return mask.astype(bool)
 
-    min_th_ok = np.all(HSV > min_values, axis=2)
-    max_th_ok = np.all(HSV < max_values, axis=2)
-
-    out = np.logical_and(min_th_ok, max_th_ok)
-
-    return out
-
-
-def mag_threshold(image, sobel_kernel=3, mag_thresh=(0, 255)):
-    # Convert to grayscale
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    # Take both Sobel x and y gradients
-    sobelx = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=sobel_kernel)
-    sobely = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=sobel_kernel)
-    # Calculate the gradient magnitude
-    gradmag = np.sqrt(sobelx**2 + sobely**2)
-    # Rescale to 8 bit
-    scale_factor = np.max(gradmag)/255
-    gradmag = (gradmag/scale_factor).astype(np.uint8)
-    # Create a binary image of ones where threshold is met, zeros otherwise
-#     binary_output = np.zeros_like(gradmag)
-#     binary_output[(gradmag >= mag_thresh[0]) & (gradmag <= mag_thresh[1])] = 1
-    _, sobel_mag = cv2.threshold(gradmag, 50, 1, cv2.THRESH_BINARY)
-
-    return sobel_mag.astype(bool)
-
-
-
-def binarize(img):
-    h, w = img.shape[:2]
-    binary = np.zeros(shape=(h, w), dtype=np.uint8)
-    out = HSV_threshold(img, yellow_HSV_th_min, yellow_HSV_th_max)
-    binary = np.logical_or(binary, out)
-    eq_white_mask = get_binary_from_equalized_grayscale(img)
-    print(eq_white_mask.shape)
-    binary = np.logical_or(binary, eq_white_mask)
-    out = mag_threshold(img)
-    out = np.logical_or(binary, out)
-    kernel = np.ones((5, 5), np.uint8)
-    closing = cv2.morphologyEx(out.astype(np.uint8), cv2.MORPH_CLOSE, kernel)
-    return closing
 
 def get_binary_from_equalized_grayscale(frame):
     """
     Apply histogram equalization to an input frame, threshold it and return the (binary) result.
     """
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-
+    gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
     eq_global = cv2.equalizeHist(gray)
-
-    _, th = cv2.threshold(eq_global, thresh=250, maxval=255, type=cv2.THRESH_BINARY)
-
-    return th
+    _, mask = cv2.threshold(eq_global, thresh=250, maxval=255, type=cv2.THRESH_BINARY)
+    return mask
 
 
-def birdeye(img, verbose=False):
+def mag_threshold(image, sobel_kernel=9):
+    """
+    Apply edge detection with sobel kernel and apply threshold filter by magnitude
+    :param image:
+    :param sobel_kernel:
+    :return:
+    """
+    # Convert to grayscale
+    gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+    # Take both Sobel x and y gradients
+    sobelx = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=sobel_kernel)
+    sobely = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=sobel_kernel)
+    # Calculate the gradient magnitude
+    gradmag = np.sqrt(sobelx ** 2 + sobely ** 2)
+    # Rescale to 8 bit
+    scale_factor = np.max(gradmag) / 255
+    gradmag = (gradmag / scale_factor).astype(np.uint8)
+    # Create a binary image of ones where threshold is met, zeros otherwise
+    _, sobel_mag = cv2.threshold(gradmag, thresh=50, maxval=1, type=cv2.THRESH_BINARY)
+    return sobel_mag.astype(bool)
+
+
+def binarize(img, visualise=False):
+    h, w = img.shape[:2]
+
+    # create all zeros image with shape of original image
+    binary = np.zeros(shape=(h, w), dtype=np.uint8)
+
+    # highlight yellow lines by thresholding hsv
+    hsv_yellow_mask = hsv_threshold(img, yellow_hsv_min, yellow_hsv_max)
+
+    # highlight white lines by thresholding the equalized frame
+    eq_white_mask = get_binary_from_equalized_grayscale(img)
+
+    # thresholded gradients to get Sobel binary mask
+    sobel_mask = mag_threshold(img)
+
+    # combine the three steps results by logical or
+    binary = np.logical_or(binary, hsv_yellow_mask)
+    binary = np.logical_or(binary, eq_white_mask)
+    out = np.logical_or(binary, sobel_mask).astype(np.uint8)
+
+    # apply a morphology to fill the gaps
+    kernel = np.ones((5, 5), np.uint8)
+    closing = cv2.morphologyEx(out, cv2.MORPH_CLOSE, kernel)
+
+    if visualise:
+        f, axes = plt.subplots(2, 3)
+        axes[0, 0].imshow(img)
+        axes[0, 0].set_title('input_frame')
+        axes[0, 0].set_axis_off()
+
+        axes[0, 1].imshow(eq_white_mask, cmap='gray')
+        axes[0, 1].set_title('white mask')
+        axes[0, 1].set_axis_off()
+
+        axes[0, 2].imshow(hsv_yellow_mask, cmap='gray')
+        axes[0, 2].set_title('yellow mask')
+        axes[0, 2].set_axis_off()
+
+        axes[1, 0].imshow(sobel_mask, cmap='gray')
+        axes[1, 0].set_title('sobel mask')
+        axes[1, 0].set_axis_off()
+
+        axes[1, 1].imshow(out, cmap='gray')
+        axes[1, 1].set_title('before closure')
+        axes[1, 1].set_axis_off()
+
+        axes[1, 2].imshow(closing, cmap='gray')
+        axes[1, 2].set_title('after closure')
+        axes[1, 2].set_axis_off()
+        plt.show()
+
+    return out.astype(np.uint8)
+
+
+def birdeye(img, visualise=False):
     """
     Apply perspective transform to input frame to get the bird's eye view.
     :param img: input color frame
-    :param verbose: if True, show the transformation result
+    :param visualise: if True, show the transformation result
     :return: warped image, and both forward and backward transformation matrices
     """
-    h, w = img.shape[:2]
+    h, w = img.shape[:2]  # 720x1280
 
-    src = np.float32([[w, h-10],    # br
-                      [0, h-10],    # bl
-                      [546, 460],   # tl
-                      [732, 460]])  # tr
-    dst = np.float32([[w, h],       # br
-                      [0, h],       # bl
-                      [0, 0],       # tl
-                      [w, 0]])      # tr
+    src = np.float32([[w, h - 10],
+                      [0, h - 10],
+                      [540, 460],
+                      [750, 460]])
+    dst = np.float32([[w, h],
+                      [0, h],
+                      [0, 0],
+                      [w, 0]])
 
-    M = cv2.getPerspectiveTransform(src, dst)
-    Minv = cv2.getPerspectiveTransform(dst, src)
-    print("birdeye:",img.shape)
-    warped = cv2.warpPerspective(img, M, (w, h), flags=cv2.INTER_LINEAR)
+    matrix = cv2.getPerspectiveTransform(src, dst)
+    inverse_matrix = cv2.getPerspectiveTransform(dst, src)
+    warped = cv2.warpPerspective(img, matrix, (w, h), flags=cv2.INTER_LINEAR)
 
-
-    if verbose:
-        f, axarray = plt.subplots(1, 2)
+    if visualise:
+        f, axes = plt.subplots(1, 2)
         f.set_facecolor('white')
-        axarray[0].set_title('Before perspective transform')
-        axarray[0].imshow(img, cmap='gray')
+        axes[0].set_title('Before perspective transform')
+        axes[0].imshow(img, cmap='gray')
         for point in src:
-            axarray[0].plot(*point, '.')
-        axarray[1].set_title('After perspective transform')
-        axarray[1].imshow(warped, cmap='gray')
+            axes[0].plot(*point, '.')
+
+        axes[1].set_title('After perspective transform')
+        axes[1].imshow(warped, cmap='gray')
         for point in dst:
-            axarray[1].plot(*point, '.')
-        for axis in axarray:
+            axes[1].plot(*point, '.')
+
+        for axis in axes:
             axis.set_axis_off()
         plt.show()
+        f.savefig('output_images/birdeye.png', format='png', bbox_inches='tight', transparent=True)
 
-    return warped, M, Minv
+    return warped, matrix, inverse_matrix
 
 
 if __name__ == '__main__':
@@ -155,12 +218,8 @@ if __name__ == '__main__':
 
     # show result on test images
     for test_img in glob.glob('test_images/*.jpg'):
+        img = mpimg.imread(test_img)
+        img_undistorted = undistort(img, mtx, dist, True)
+        img_binary = binarize(img_undistorted, True)
+        img_birdeye, matrix, inverse_matrix = birdeye(img_undistorted, True)
 
-        img = cv2.imread(test_img)
-
-        img_undistorted = undistort(img, mtx, dist)
-
-        img_binary = binarize(img_undistorted)
-        # plt.imshow(img_binary, cmap="gray")
-
-        img_birdeye, M, Minv = birdeye(img_binary, verbose=True)
