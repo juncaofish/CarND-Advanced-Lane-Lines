@@ -67,7 +67,7 @@ I used a combination of HSV color (for yellow lane line) and gradient magnitude 
 
 #### 3. Describe how (and identify where in your code) you performed a perspective transform and provide an example of a transformed image.
 
-The code for my perspective transform includes a function called `birdeye()`, which appears in lines #179 through #188 in the file `utils.py` (utils.py).  The `birdeye()` function takes as inputs an image (`img`), as well as source (`src`) and destination (`dst`) points.  I chose the hardcode the source and destination points in the following manner:
+The code for my perspective transform includes a function called `birdeye()`, which appears in lines #147 through #156 in the file `utils.py` (utils.py).  The `birdeye()` function takes as inputs an image (`img`), as well as source (`src`) and destination (`dst`) points.  I chose the hardcode the source and destination points in the following manner:
 
 ```python
 h, w = img.shape[:2]  # 720x1280

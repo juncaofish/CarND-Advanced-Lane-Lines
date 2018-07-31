@@ -134,38 +134,6 @@ def binarize(img, visualise=False):
     binary = np.logical_or(binary, hsv_yellow_mask)
     binary = np.logical_or(binary, eq_white_mask)
     out = np.logical_or(binary, sobel_mask).astype(np.uint8)
-
-    # apply a morphology to fill the gaps
-    kernel = np.ones((5, 5), np.uint8)
-    closing = cv2.morphologyEx(out, cv2.MORPH_CLOSE, kernel)
-
-    if visualise:
-        f, axes = plt.subplots(2, 3)
-        axes[0, 0].imshow(img)
-        axes[0, 0].set_title('input_frame')
-        axes[0, 0].set_axis_off()
-
-        axes[0, 1].imshow(eq_white_mask, cmap='gray')
-        axes[0, 1].set_title('white mask')
-        axes[0, 1].set_axis_off()
-
-        axes[0, 2].imshow(hsv_yellow_mask, cmap='gray')
-        axes[0, 2].set_title('yellow mask')
-        axes[0, 2].set_axis_off()
-
-        axes[1, 0].imshow(sobel_mask, cmap='gray')
-        axes[1, 0].set_title('sobel mask')
-        axes[1, 0].set_axis_off()
-
-        axes[1, 1].imshow(out, cmap='gray')
-        axes[1, 1].set_title('before closure')
-        axes[1, 1].set_axis_off()
-
-        axes[1, 2].imshow(closing, cmap='gray')
-        axes[1, 2].set_title('after closure')
-        axes[1, 2].set_axis_off()
-        plt.show()
-
     return out.astype(np.uint8)
 
 
