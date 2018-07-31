@@ -217,7 +217,7 @@ if __name__ == '__main__':
     mtx, dist = calibrate('camera_cal')
 
     # show result on test images
-    for test_img in glob.glob('test_images/*.jpg'):
+    for test_img in glob.glob('camera_cal/*.jpg'):
         img = mpimg.imread(test_img)
         img_undistorted = undistort(img, mtx, dist, True)
         img_binary = binarize(img_undistorted, True)
